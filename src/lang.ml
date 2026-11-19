@@ -311,7 +311,6 @@ let rec type_of_expr (g, e) : arith_type option =
   out : The concrete expression e in string format.
 *)
 let rec string_of_expr e = match e with
-  (* TODO: extend string_of_expr *)
    | Var x -> x
    | Let(x,e1,e2) -> "Let " ^ x ^ " = " ^ string_of_expr e1 ^ " In " ^ string_of_expr e2
    | Bool true -> "True"
