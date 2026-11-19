@@ -2,6 +2,11 @@
    CatML Abstract Syntax
    ----------------------
 *)
+
+
+type arith_type = INT | BOOL 
+  | PAIR of arith_type * arith_type 
+  | FUN of arith_type * arith_type 
 type var = string
 type expr =
      (* boolean expression forms *)
@@ -13,7 +18,11 @@ type expr =
      (* Variables and let expressions *)
      | Var of var | Let of var * expr * expr
 
-     (* TODO: Add pairs; functions; and recursive functions *)
+     (* Changes to Expr, added types to Fun and Fix *)
+     | Pair of expr * expr | First of expr | Second of expr
+     | Fun of var * arith_type * expr
+     | Fix of var * var * arith_type * arith_type * expr
+     | App of expr * expr 
 
 
 (*
@@ -21,9 +30,12 @@ type expr =
   in : AST [[e]]
   out : true iff e is a value
 *)
-let is_val e = match e with 
+let rec is_val e = match e with 
      Int _ -> true
    | Bool _ -> true
+   | Pair (e1, e2) -> is_val e1 && is_val e2
+   | Fun _ -> true
+   | Fix _ -> true
    | _ -> false
 
 (*************************)
@@ -43,6 +55,15 @@ let rec subst (x, v, e) : expr =
   | Mult(e1,e2) -> Mult(subst(x,v,e1), subst(x,v,e2))
   | Equal(e1,e2) -> Equal(subst(x,v,e1), subst(x,v,e2))
   | If(e0,e1,e2) -> If(subst(x,v,e0), subst(x,v,e1), subst(x,v,e2))
+
+  (* Subst Additions *)
+  | Pair(e1,e2) -> Pair(subst(x,v,e1), (subst(x,v,e2)))
+  | First(e') -> First(subst(x,v,e'))
+  | Second(e') -> Second(subst(x,v,e'))
+  | App(e1,e2) -> App(subst(x,v,e1), (subst(x,v,e2)))
+  | Fun(y, t, e') -> if x = y then e else Fun(y, t, subst(x, v, e'))
+  | Fix(f, y, t1, t2, e') -> if x = y || x = f then e else Fix(f, y, t1, t2, subst(x, v, e'))
+
 
 type step_result = Step of expr | NotReducible
 (* 
@@ -123,6 +144,43 @@ let rec step (e : expr) : step_result =
       | Step e1' -> Step (Let(x,e1',e2))
       | NotReducible -> if is_val e1 then Step(subst(x,e1,e2)) else NotReducible
       end
+    (* Step Additions *)
+    | Pair(e1, e2) ->
+      begin match step e1 with 
+      | Step e1' -> Step(Pair(e1', e2))
+      | NotReducible -> 
+        begin match step e2 with
+        | Step e2' -> Step(Pair(e1, e2'))
+        | NotReducible -> NotReducible
+        end
+      end
+    | First(Pair(v1, v2)) when is_val v1 && is_val v2 -> Step v1
+    | Second(Pair(v1, v2)) when is_val v1 && is_val v2 -> Step v2
+    | First e1 ->
+      begin match step e1 with
+      | Step e1' -> Step(First e1')
+      | NotReducible -> NotReducible
+      end
+    | Second e1 ->
+      begin match step e1 with
+      | Step e1' -> Step(Second e1')
+      | NotReducible -> NotReducible
+      end
+    | Fun _ -> NotReducible
+    | Fix _ -> NotReducible
+    | App(Fun(x, _, func_body), v) when is_val v -> Step(subst(x, v, func_body))
+    | App(Fix(f, x, t1, t2, func_body), v) when is_val v -> 
+      Step(subst(f, Fix(f, x, t1, t2, func_body), subst(x, v, func_body)))
+    | App(e1, e2) ->
+      begin match step e1 with
+      | Step e1' -> Step(App(e1', e2))
+      | NotReducible ->
+        begin match step e2 with
+        | Step e2' -> Step(App(e1, e2'))
+        | NotReducible -> NotReducible
+        end
+      end
+
 
 
 (*
@@ -141,9 +199,6 @@ let rec multistep e = match step e with
 (*****************)
 (* Type checking *)
 (*****************)
-
-type arith_type = INT | BOOL
-(* TODO: add pairs and function types *)
 
 (* Define a type to represent finite maps/typing contexts *)
 type context = (var * arith_type) list
@@ -211,7 +266,37 @@ let rec type_of_expr (g, e) : arith_type option =
       else None
     | _, _, _ -> None
     end
-
+  | Pair(e1, e2) ->
+    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
+    | Some t1, Some t2 -> Some(PAIR(t1, t2))
+    | _, _ -> None
+    end
+  | First(e1) ->
+    begin match type_of_expr(g, e1) with
+    | Some(PAIR(t1, _)) -> Some(t1)
+    | _ -> None
+    end
+  | Second(e1) ->
+    begin match type_of_expr(g, e1) with
+    | Some(PAIR(_, t2)) -> Some(t2)
+    | _ -> None
+    end
+  (* tx = type x, tr = type return *)
+  | Fun(x, tx, e') ->
+    begin match type_of_expr(extend(g, x, tx), e') with
+    | Some tr -> Some(FUN(tx, tr))
+    | None -> None
+    end
+  | Fix(f, x, tx, tr, e') ->
+    begin match type_of_expr(extend(extend(g, f, FUN(tx, tr)), x, tx), e') with
+    | Some tr' -> if tr' = tr then Some(FUN(tx, tr)) else None
+    | None -> None
+    end
+  | App(e1, e2) ->
+    begin match type_of_expr(g, e1), type_of_expr(g, e2) with
+    | Some(FUN(tx, tr)), Some t2 -> if tx = t2 then Some tr else None
+    | _, _ -> None
+    end
 
 
 (********************************************)
@@ -241,6 +326,13 @@ let rec string_of_expr e = match e with
    | If(e1, e2, e3) -> "If " ^ (string_of_expr e1) ^ 
                        " Then " ^ (string_of_expr e2) ^
                        " Else " ^ (string_of_expr e3)
+  (* string_of_expr Additions *)
+   | Pair (e1, e2) -> "(" ^ (string_of_expr e1) ^ ", " ^ (string_of_expr e2) ^ ")"
+   | First e1 -> "(First " ^ (string_of_expr e1) ^ ")"
+   | Second e1 -> "(Second " ^ (string_of_expr e1) ^ ")"
+   | Fun (x, _, e1) -> "(Fun " ^ x ^ " -> " ^ (string_of_expr e1) ^ ")"
+   | Fix (f, x, _, _, e1) -> "(Fix " ^ f ^ ". " ^ x ^ " -> " ^ (string_of_expr e1) ^ ")"
+   | App (e1, e2) -> "(" ^ (string_of_expr e1) ^ " " ^ (string_of_expr e2) ^ ")"
 
 
 (*
