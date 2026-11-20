@@ -112,6 +112,7 @@ Yes, I used Claude Code (Opus & Fable) in the following situations:
 - Asked Claude how to debug "utop # CatML.Main "examples/factorial.catml";;
 Error: Unbound constructor CatML.Main"
 - Asked Claude why my output isn't changing after fixing my code.
+- Prompted Claude to "Grade my project" to give feedback to me. (approved prompt in person).
 
 3. Did you make any design decisions that we should know about?
 
